@@ -19,4 +19,7 @@ public class BranchManagementService {
     public Collection<Branch> getAllBranches() {
         return branchDatabase.values();
     }
+    public void addBranch(Branch branch) {
+        branchDatabase.put(branch.getBranchID(), branch);
+    }
 }

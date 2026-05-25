@@ -28,21 +28,26 @@ public class ConsoleUI {
         this.menuService = menuService;
         this.scanner = new Scanner(System.in);
 
-        loadDummyUsers();
+        // 1. Kullanıcıları Yükle
+        this.userDatabase = repository.CsvDatabaseManager.loadUsers();
+
+        // 2. Menüyü Yükle
+        List<MenuItem> loadedMenu = repository.CsvDatabaseManager.loadMenu();
+        for(MenuItem item : loadedMenu) {
+            this.menuService.addMenuItem(item);
+        }
+
+        // 3. Şubeleri Yükle
+        Map<String, Branch> loadedBranches = repository.CsvDatabaseManager.loadBranches();
+        for (Branch b : loadedBranches.values()) {
+            this.branchManagementService.addBranch(b);
+        }
+
+        // 4. Envanterleri Yükle (ve otomatik olarak ilgili şubelere dağıt)
+        repository.CsvDatabaseManager.loadInventory(loadedBranches);
     }
 
-    private void loadDummyUsers() {
-        User admin = UserFactory.createUser(UserRole.HQ_ADMIN, "HQ-01", "admin", "1234");
-        User manager = UserFactory.createUser(UserRole.BRANCH_MANAGER, "BR-01", "bekir_manager", "1234");
-        User applicant = UserFactory.createUser(UserRole.APPLICANT, "AP-01", "ilker_aday", "1234");
 
-        userDatabase.put(admin.getUsername(), admin);
-        userDatabase.put(manager.getUsername(), manager);
-        userDatabase.put(applicant.getUsername(), applicant);
-
-        User bekir = userDatabase.get("bekir_manager");
-        ((BranchManager) bekir).setManagedBranchID("BR-01");
-    }
 
     public void start() {
         System.out.println("=== Welcome to Franchise Management System ===");
@@ -61,13 +66,13 @@ public class ConsoleUI {
         System.out.println("1- Login");
         System.out.println("2- Register New Applicant");
         System.out.print("Your choice: ");
-        String choice = scanner.nextLine();
+        String choice = scanner.nextLine().trim(); // TRIM EKLENDİ
 
         if (choice.equals("1")) {
             System.out.print("Username: ");
-            String username = scanner.nextLine();
+            String username = scanner.nextLine().trim();
             System.out.print("Password: ");
-            String password = scanner.nextLine();
+            String password = scanner.nextLine().trim();
 
             User user = userDatabase.get(username);
             if (user != null && user.login(username, password)) {
@@ -78,7 +83,7 @@ public class ConsoleUI {
             }
         } else if (choice.equals("2")) {
             System.out.print("Enter new Username: ");
-            String newUsername = scanner.nextLine();
+            String newUsername = scanner.nextLine().trim();
 
             if (userDatabase.containsKey(newUsername)) {
                 System.out.println("Error: This username is already taken.");
@@ -86,14 +91,15 @@ public class ConsoleUI {
             }
 
             System.out.print("Enter new Password: ");
-            String newPassword = scanner.nextLine();
+            String newPassword = scanner.nextLine().trim();
 
             String newId = "APP-" + System.currentTimeMillis();
             User newApplicant = UserFactory.createUser(UserRole.APPLICANT, newId, newUsername, newPassword);
             userDatabase.put(newUsername, newApplicant);
+            repository.CsvDatabaseManager.saveUsers(userDatabase.values());
             System.out.println("Registration successful! You can now login.");
         } else {
-            System.out.println("Invalid choice.");
+            System.out.println("Error: Invalid choice.");
         }
     }
 
@@ -117,12 +123,12 @@ public class ConsoleUI {
             System.out.println("5- Log Out");
 
             System.out.print("Your choice: ");
-            String choice = scanner.nextLine();
+            String choice = scanner.nextLine().trim();
             switch (choice) {
                 case "1": {
                     applicationService.WriteAllPendingApplications();
                     System.out.print("Please enter the Application ID you wish to review: ");
-                    String applicationID = scanner.nextLine();
+                    String applicationID = scanner.nextLine().trim();
                     if (applicationService.getApplication(applicationID) != null) {
                         FranchiseApplication application = applicationService.getApplication(applicationID);
                         System.out.println("Current Application:");
@@ -141,16 +147,17 @@ public class ConsoleUI {
                         System.out.println("1- Approve");
                         System.out.println("2- Reject");
                         System.out.println("3- Request extra information");
-                        String decision = scanner.nextLine();
+                        String decision = scanner.nextLine().trim();
                         switch (decision) {
                             case "1": {
                                 System.out.println("Please configure the royalty fee strategy for this branch:");
                                 System.out.println("1- Fixed Amount");
                                 System.out.println("2- Percentage");
-                                String stratChoice = scanner.nextLine();
+                                String stratChoice = scanner.nextLine().trim();
                                 String royaltyType = stratChoice.equals("1") ? "FIXED" : "PERCENTAGE";
-                                System.out.print("Please enter the value: ");
-                                double royaltyValue = Double.parseDouble(scanner.nextLine());
+
+                                // KALKAN DEVREDE: Hoca harf girerse çökmez, tekrar sorar!
+                                double royaltyValue = getValidDoubleInput("Please enter the value: ");
 
                                 String newBranchId = "BR-" + System.currentTimeMillis();
                                 String applicantId = application.getApplicantID();
@@ -171,6 +178,8 @@ public class ConsoleUI {
                                 }
 
                                 System.out.println("Application approved successfully with " + royaltyType + " strategy!");
+                                repository.CsvDatabaseManager.saveUsers(userDatabase.values());
+                                repository.CsvDatabaseManager.saveBranches(branchManagementService.getAllBranches());
                                 break;
                             }
                             case "2": {
@@ -186,9 +195,12 @@ public class ConsoleUI {
                                 System.out.println("Your request for extra information has been received!");
                                 break;
                             }
+                            default: {
+                                System.out.println("Error: Invalid choice.");
+                            }
                         }
                     } else {
-                        System.out.println("There is no such Application ID");
+                        System.out.println("Error: There is no such Application ID");
                     }
                     break;
                 }
@@ -200,7 +212,10 @@ public class ConsoleUI {
                         for (RestockRequest rq : inventoryService.getAllRequests()) {
                             if (rq.getStatus() == RestockStatus.CREATED || rq.getStatus() == RestockStatus.PROCESSING) {
                                 System.out.println("Request ID: " + rq.getRequestId() + " | Branch ID: " + rq.getBranchId() + " | Status: " + rq.getStatus());
-                                System.out.println("Requested items: " + rq.getRequestedItems());
+                                System.out.println("Requested items:");
+                                for (InventoryItem reqItem : rq.getRequestedItems()) {
+                                    System.out.println("  -> Name: " + reqItem.getItemName() + " | Quantity: " + reqItem.getCurrentQuantity());
+                                }
                                 found = true;
                             }
                         }
@@ -209,8 +224,8 @@ public class ConsoleUI {
                             break;
                         }
                         System.out.print("Enter Request ID to process (or press Enter to go back): ");
-                        String reqId = scanner.nextLine();
-                        if (reqId.trim().isEmpty()) {
+                        String reqId = scanner.nextLine().trim();
+                        if (reqId.isEmpty()) {
                             backToAdminMenu = true;
                             break;
                         }
@@ -221,18 +236,43 @@ public class ConsoleUI {
                             System.out.println("1- Fulfill (Ship Inventory)");
                             System.out.println("2- Cancel (Deny Request)");
                             System.out.print("Your choice: ");
-                            String dec = scanner.nextLine();
+                            String dec = scanner.nextLine().trim();
                             if (dec.equals("1")) {
                                 inventoryService.updateRestockStatus(reqId, RestockStatus.FULFILLED);
-                                System.out.println("Request FULFILLED. Items shipped to the branch.");
+
+
+                                Branch targetBranch = branchManagementService.getBranch(rq.getBranchId());
+                                if (targetBranch != null) {
+                                    for (InventoryItem reqItem : rq.getRequestedItems()) {
+                                        boolean isItemAlreadyInBranch = false;
+
+
+                                        for (InventoryItem branchItem : targetBranch.getInventory()) {
+                                            if (branchItem.getItemID().equals(reqItem.getItemID())) {
+                                                branchItem.setCurrentQuantity(branchItem.getCurrentQuantity() + reqItem.getCurrentQuantity());
+                                                isItemAlreadyInBranch = true;
+                                                break;
+                                            }
+                                        }
+
+
+                                        if (!isItemAlreadyInBranch) {
+                                            targetBranch.getInventory().add(reqItem);
+                                        }
+                                    }
+                                }
+
+
+                                System.out.println("Request FULFILLED. Items shipped and branch inventory updated.");
+                                repository.CsvDatabaseManager.saveInventory(branchManagementService.getAllBranches());
                             } else if (dec.equals("2")) {
                                 inventoryService.updateRestockStatus(reqId, RestockStatus.CANCELED);
                                 System.out.println("Request CANCELED.");
                             } else {
-                                System.out.println("Invalid choice.");
+                                System.out.println("Error: Invalid choice.");
                             }
                         } else {
-                            System.out.println("Invalid Request ID.");
+                            System.out.println("Error: Invalid Request ID.");
                         }
                     }
                     break;
@@ -247,7 +287,7 @@ public class ConsoleUI {
                         System.out.println("4- View all menu");
                         System.out.println("5- Back to Main Menu");
                         System.out.print("Your choice: ");
-                        String menuChoice = scanner.nextLine();
+                        String menuChoice = scanner.nextLine().trim();
 
                         switch (menuChoice) {
                             case "1": {
@@ -255,29 +295,37 @@ public class ConsoleUI {
                                 String itemName = scanner.nextLine();
                                 System.out.print("Item description: ");
                                 String itemDescription = scanner.nextLine();
-                                System.out.print("Item price: ");
-                                double price;
-                                try {
-                                    price = Double.parseDouble(scanner.nextLine());
-                                } catch (NumberFormatException e) {
-                                    System.out.println("Error: Price is not a number!");
-                                    break;
-                                }
+
+                                // KALKAN DEVREDE: Harf girilirse tekrar sorar
+                                double price = getValidDoubleInput("Item price: ");
+
                                 String itemId = "MNU-" + System.currentTimeMillis();
                                 MenuItem newItem = new MenuItem(itemId, itemName, itemDescription, price);
                                 menuService.addMenuItem(newItem);
+                                repository.CsvDatabaseManager.saveMenu(menuService.getAllMenuItems());
                                 System.out.println("New item successfully added to menu!");
+                                repository.CsvDatabaseManager.saveMenu(menuService.getAllMenuItems());
                                 break;
                             }
                             case "2": {
+                                if (menuService.getAllMenuItems().isEmpty()) {
+                                    System.out.println("Menu is empty! Nothing to delete.");
+                                    break;
+                                }
+                                // UX İYİLEŞTİRMESİ: Silmeden önce menüyü gösterir
+                                System.out.println("--- Current Menu Items ---");
+                                for (MenuItem item : menuService.getAllMenuItems()) {
+                                    System.out.println("ID: " + item.getMenuItemID() + " | Name: " + item.getName());
+                                }
                                 System.out.print("Enter the item ID that will be deleted: ");
-                                String itemId = scanner.nextLine();
+                                String itemId = scanner.nextLine().trim();
                                 if (menuService.getMenuItem(itemId) == null) {
                                     System.out.println("Error: Item does not exist!");
                                     break;
                                 }
                                 menuService.removeMenuItem(itemId);
                                 System.out.println("Item successfully removed from menu!");
+                                repository.CsvDatabaseManager.saveMenu(menuService.getAllMenuItems());
                                 break;
                             }
                             case "3": {
@@ -289,21 +337,18 @@ public class ConsoleUI {
                                     System.out.println("ID: " + item.getMenuItemID() + " | Name: " + item.getName() + " | Price: " + item.getPrice() + " TL");
                                 }
                                 System.out.print("Enter the ID of the item you want to update its price: ");
-                                String id = scanner.nextLine();
+                                String id = scanner.nextLine().trim();
                                 if (menuService.getMenuItem(id) == null) {
                                     System.out.println("Error: Item does not exist!");
                                     break;
                                 }
-                                System.out.print("New price: ");
-                                double newPrice;
-                                try {
-                                    newPrice = Double.parseDouble(scanner.nextLine());
-                                } catch (NumberFormatException e) {
-                                    System.out.println("Error: Price is not a number!");
-                                    break;
-                                }
+
+                                // KALKAN DEVREDE: Harf girilirse tekrar sorar
+                                double newPrice = getValidDoubleInput("New price: ");
+
                                 menuService.updatePrice(id, newPrice);
                                 System.out.println("Price updated successfully!");
+                                repository.CsvDatabaseManager.saveMenu(menuService.getAllMenuItems());
                                 break;
                             }
                             case "4": {
@@ -321,7 +366,7 @@ public class ConsoleUI {
                                 break;
                             }
                             default: {
-                                System.out.println("Invalid choice.");
+                                System.out.println("Error: Invalid choice.");
                             }
                         }
                     }
@@ -337,7 +382,7 @@ public class ConsoleUI {
                     return;
                 }
                 default: {
-                    System.out.println("Invalid choice.");
+                    System.out.println("Error: Invalid choice.");
                 }
             }
         }
@@ -355,12 +400,12 @@ public class ConsoleUI {
             System.out.println("5- Log Out");
 
             System.out.print("Your choice: ");
-            String choice = scanner.nextLine();
+            String choice = scanner.nextLine().trim();
             switch (choice) {
                 case "1": {
                     Branch br = branchManagementService.getBranch(branchId);
                     if (br == null) {
-                        System.out.println("No active branch registered in the system was found.");
+                        System.out.println("Error: No active branch registered in the system was found.");
                         break;
                     }
                     if (br.getInventory().isEmpty()) {
@@ -377,11 +422,82 @@ public class ConsoleUI {
                     break;
                 }
                 case "2": {
-                    System.out.println("Please enter the items you want to restock with {,} between them: ");
-                    String items = scanner.nextLine();
-                    String[] itemArray = items.split(",");
-                    List<String> itemList = Arrays.asList(itemArray);
-                    RestockRequest rs = new RestockRequest("REQ-" + System.currentTimeMillis(), branchId, itemList, RestockStatus.CREATED, "05-06-2026");
+                    Branch br = branchManagementService.getBranch(branchId);
+                    if (br == null) {
+                        System.out.println("Error: No active branch found.");
+                        break;
+                    }
+
+                    System.out.println("--- Request Restock ---");
+                    List<InventoryItem> requestedItems = new ArrayList<>();
+                    boolean ordering = true;
+
+                    while (ordering) {
+                        System.out.println("\n1- Restock an EXISTING item");
+                        System.out.println("2- Request a completely NEW item");
+                        System.out.println("3- Finish and Submit Request");
+                        System.out.print("Your choice: ");
+                        String subChoice = scanner.nextLine().trim();
+
+                        switch (subChoice) {
+                            case "1":
+                                if (br.getInventory().isEmpty()) {
+                                    System.out.println("Error: Your inventory is empty. Please request a NEW item first.");
+                                    break;
+                                }
+                                System.out.println("--- Existing Inventory ---");
+                                for (InventoryItem item : br.getInventory()) {
+                                    System.out.println("ID: " + item.getItemID() + " | Name: " + item.getItemName());
+                                }
+                                System.out.print("Enter Item ID to restock: ");
+                                String inputId = scanner.nextLine().trim();
+
+                                InventoryItem existingItem = null;
+                                for (InventoryItem item : br.getInventory()) {
+                                    if (item.getItemID().equalsIgnoreCase(inputId)) {
+                                        existingItem = item;
+                                        break;
+                                    }
+                                }
+                                if (existingItem == null) {
+                                    System.out.println("Error: Item ID not found.");
+                                    break;
+                                }
+
+                                int qty = getValidIntegerInput("Enter additional quantity for " + existingItem.getItemName() + ": ");
+                                // Geçici bir nesne yaratarak isteği sepete ekliyoruz
+                                InventoryItem reqExisting = new InventoryItem(existingItem.getItemID(), existingItem.getItemName(), branchId, qty, existingItem.getThresholdQuantity());
+                                requestedItems.add(reqExisting);
+                                System.out.println("Added to request cart.");
+                                break;
+
+                            case "2":
+                                System.out.print("Enter the name of the NEW item (e.g., Napkin): ");
+                                String newName = scanner.nextLine().trim();
+                                int newQty = getValidIntegerInput("Enter initial quantity: ");
+                                int newThreshold = getValidIntegerInput("Enter critical stock threshold for this item: ");
+
+                                String newId = "INV-" + System.currentTimeMillis(); // YENİ ÜRÜN ID'Sİ
+                                InventoryItem newItem = new InventoryItem(newId, newName, branchId, newQty, newThreshold);
+                                requestedItems.add(newItem);
+                                System.out.println("New item added to request cart.");
+                                break;
+
+                            case "3":
+                                ordering = false;
+                                break;
+
+                            default:
+                                System.out.println("Error: Invalid choice.");
+                        }
+                    }
+
+                    if (requestedItems.isEmpty()) {
+                        System.out.println("Restock request cancelled (No items added).");
+                        break;
+                    }
+
+                    RestockRequest rs = new RestockRequest("REQ-" + System.currentTimeMillis(), branchId, requestedItems, RestockStatus.CREATED, "May 2026");
                     inventoryService.addRestockRequest(rs);
                     System.out.println("Your request has been forwarded to head office.");
                     break;
@@ -389,7 +505,7 @@ public class ConsoleUI {
                 case "3": {
                     Branch br = branchManagementService.getBranch(branchId);
                     if (br == null) {
-                        System.out.println("No active branch registered in the system was found.");
+                        System.out.println("Error: No active branch registered in the system was found.");
                         break;
                     }
                     double rev = br.getMonthlyRevenue();
@@ -409,6 +525,10 @@ public class ConsoleUI {
                 case "4": {
                     System.out.println("--- Local Financial Report ---");
                     Branch br = branchManagementService.getBranch(branchId);
+                    if (br == null) {
+                        System.out.println("Error: No active branch found.");
+                        break;
+                    }
                     FinancialReport report = financeService.generateBranchReport(br, "May 2026");
                     System.out.println("Report ID: " + report.getReportId());
                     System.out.println("Period: " + report.getPeriod());
@@ -423,7 +543,7 @@ public class ConsoleUI {
                     return;
                 }
                 default: {
-                    System.out.println("Invalid choice.");
+                    System.out.println("Error: Invalid choice.");
                 }
             }
         }
@@ -437,7 +557,7 @@ public class ConsoleUI {
             System.out.println("3- Log Out");
 
             System.out.print("Your choice: ");
-            String choice = scanner.nextLine();
+            String choice = scanner.nextLine().trim();
             switch (choice) {
                 case "1": {
                     System.out.print("Please enter your financial status: ");
@@ -459,9 +579,9 @@ public class ConsoleUI {
                 }
                 case "2": {
                     System.out.print("Please enter the ID of application that you want to question: ");
-                    String applicationID = scanner.nextLine();
+                    String applicationID = scanner.nextLine().trim();
                     if (applicationService.getApplication(applicationID) == null) {
-                        System.out.println("No such application was found.");
+                        System.out.println("Error: No such application was found.");
                     } else {
                         FranchiseApplication application = applicationService.getApplication(applicationID);
                         System.out.println("Your application status is: " + application.getStatus());
@@ -469,7 +589,7 @@ public class ConsoleUI {
                         if (application.getStatus().equals(ApplicationStatus.INFO_REQUESTED)) {
                             System.out.println("HQ admin feedback: " + application.getAdminFeedback());
                             System.out.print("Would you like to upload the requested document now? (Y/N): ");
-                            String answer = scanner.nextLine().toUpperCase(Locale.ROOT);
+                            String answer = scanner.nextLine().trim().toUpperCase();
                             switch (answer) {
                                 case "Y": {
                                     System.out.print("Please enter the name of the new document: ");
@@ -488,7 +608,7 @@ public class ConsoleUI {
                                     break;
                                 }
                                 default: {
-                                    System.out.println("Invalid choice.");
+                                    System.out.println("Error: Invalid choice.");
                                 }
                             }
                         }
@@ -500,8 +620,33 @@ public class ConsoleUI {
                     return;
                 }
                 default: {
-                    System.out.println("Invalid choice.");
+                    System.out.println("Error: Invalid choice.");
                 }
+            }
+        }
+    }
+
+    // --- YARDIMCI METOTLAR (HOCA KALKANI - DEFENSIVE PROGRAMMING) ---
+    private double getValidDoubleInput(String prompt) {
+        while (true) {
+            System.out.print(prompt);
+            String input = scanner.nextLine().trim();
+            try {
+                return Double.parseDouble(input);
+            } catch (NumberFormatException e) {
+                System.out.println("Error: Invalid input. Please enter a valid number (e.g., 10.5 or 100).");
+            }
+        }
+    }
+
+    private int getValidIntegerInput(String prompt) {
+        while (true) {
+            System.out.print(prompt);
+            String input = scanner.nextLine().trim();
+            try {
+                return Integer.parseInt(input);
+            } catch (NumberFormatException e) {
+                System.out.println("Error: Invalid input. Please enter a valid integer (e.g., 5).");
             }
         }
     }

@@ -1,15 +1,16 @@
 package domain;
 
 import java.util.List;
+import java.util.Map;
 
 public class RestockRequest {
     private String requestId;
     private String branchId;
-    private List<String> requestedItems;
+    private List<InventoryItem> requestedItems;
     private String requestedDate;
     private RestockStatus status;
 
-    public RestockRequest(String requestId, String branchId, List requestedItems, RestockStatus status, String requestedDate) {
+    public RestockRequest(String requestId, String branchId, List<InventoryItem> requestedItems, RestockStatus status, String requestedDate) {
         this.requestId = requestId;
         this.branchId = branchId;
         this.requestedItems = requestedItems;
@@ -33,11 +34,11 @@ public class RestockRequest {
         this.branchId = branchId;
     }
 
-    public List getRequestedItems() {
+    public List<InventoryItem> getRequestedItems() {
         return requestedItems;
     }
 
-    public void setRequestedItems(List requestedItems) {
+    public void setRequestedItems(List<InventoryItem> requestedItems) {
         this.requestedItems = requestedItems;
     }
 

@@ -1,0 +1,4 @@
+Role,UserID,Username,Password,ManagedBranchID
+MANAGER,BRM-01,manager,1234,BR-01
+ADMIN,HQ-01,admin,1234,NONE
+APPLICANT,APP-01,applicant,1234,NONE

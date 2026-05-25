@@ -1,0 +1,5 @@
+ItemID,Name,BranchID,CurrentQuantity,ThresholdQuantity
+INV-101,Coffee bean (kg),BR-01,15,20
+INV-102,Cup,BR-01,500,100
+INV-103,Napkin,BR-01,250,50
+

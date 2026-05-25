@@ -1,0 +1,2 @@
+BranchID,ManagerID,Location,IsActive,RoyaltyType,RoyaltyValue,MonthlyRevenue
+BR-01,bekir_manager,Izmir Bornova,true,PERCENTAGE,5.0,95000.0
